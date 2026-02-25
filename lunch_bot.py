@@ -8,83 +8,71 @@ from telegram import Bot
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-def get_swedish_day():
-    days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag", "Lördag", "Söndag"]
-    return days[datetime.now().weekday()]
-
-def scrape_sodra_porten():
-    try:
-        url = "https://sodraporten.kvartersmenyn.se/"
-        res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
-        soup = BeautifulSoup(res.text, 'html.parser')
-        day_name = get_swedish_day()
-        
-        # Vi letar efter rubriken oavsett om det är h3, h4 eller strong
-        target = soup.find(lambda t: t.name in ['h3', 'h4', 'strong'] and day_name.lower() in t.get_text().lower())
-        
-        if target:
-            menu_items = []
-            # Vi tittar på allt som kommer efter rubriken fram till nästa dag
-            current = target.find_next()
-            while current:
-                if current.name in ['h3', 'h4', 'strong'] and any(d in current.get_text() for d in ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]) and day_name.lower() not in current.get_text().lower():
-                    break
-                
-                txt = current.get_text(strip=True)
-                # Vi vill bara ha rader som ser ut som faktiska maträtter (längre än 10 tecken)
-                if len(txt) > 10 and day_name.lower() not in txt.lower():
-                    # Undvik dubbletter
-                    clean_txt = f"• {txt}"
-                    if clean_txt not in menu_items:
-                        menu_items.append(clean_txt)
-                current = current.find_next()
-            
-            if menu_items: return "\n".join(menu_items[:6]) # Max 6 rätter för att hålla det snyggt
-            
-        return "⚠️ Hittade rubriken men kunde inte läsa rätterna."
-    except Exception as e:
-        return f"❌ Fel: {str(e)}"
+def get_day_number():
+    # Returnerar 1 för måndag, 2 för tisdag... upp till 5 för fredag
+    return datetime.now().weekday() + 1
 
 def scrape_nya_etage():
     try:
         url = "https://nyaetage.se/"
         res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(res.text, 'html.parser')
-        day_name = get_swedish_day()
         
-        # Hittar rubriken (t.ex. Onsdag) oavsett "IDAG"-bubblan
-        header = soup.find(lambda t: t.name == 'h3' and day_name.lower() in t.get_text().lower())
+        # Hämta rätt dag-nummer (1-5)
+        day_num = get_day_number()
         
-        if header:
-            # Gå till föräldra-boxen som innehåller all mat för den dagen
-            box = header.find_parent('div')
-            if box:
-                # Plocka alla p-taggar och li-taggar
-                lines = box.find_all(['p', 'li'])
-                menu = []
-                for l in lines:
-                    t = l.get_text(strip=True).lstrip('>').strip()
-                    # Rensa bort rubriken och korta ord
-                    if len(t) > 5 and day_name.lower() not in t.lower() and "idag" not in t.lower():
-                        menu.append(f"• {t}")
-                if menu: return "\n".join(menu)
+        # Hitta rätt kort med hjälp av data-day attributet
+        # Ex: <div class="menu-card" data-day="3"> för onsdag
+        day_card = soup.find('div', class_='menu-card', attrs={'data-day': str(day_num)})
+        
+        if not day_card:
+            return f"⚠️ Hittade inte kortet för dag {day_num} (Nya Etage)."
 
-        return "⚠️ Hittade inte maten i boxen."
+        # Hämta containern för rätterna
+        menu_container = day_card.find('div', class_='menu-items')
+        if not menu_container:
+            return "⚠️ Hittade kortet men inte rätterna (menu-items saknas)."
+
+        # Plocka alla p-taggar (rätterna)
+        rows = menu_container.find_all('p')
+        menu_items = []
+        for row in rows:
+            text = row.get_text(strip=True).lstrip('>').strip()
+            if text and len(text) > 2:
+                menu_items.append(f"• {text}")
+        
+        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades i containern."
+
     except Exception as e:
-        return f"❌ Fel: {str(e)}"
+        return f"❌ Fel vid skrapning: {str(e)}"
+
+def scrape_sodra_porten():
+    # Vi behåller en förenklad version för Södra Porten
+    try:
+        url = "https://sodraporten.kvartersmenyn.se/"
+        res = requests.get(url, timeout=15)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
+        current_day = days[datetime.now().weekday()]
+        
+        header = soup.find(lambda t: t.name in ["h3", "h4"] and current_day.lower() in t.get_text().lower())
+        if header:
+            div = header.find_next_sibling('div')
+            if div:
+                items = [f"• {p.get_text(strip=True)}" for p in div.find_all('p') if len(p.get_text()) > 5]
+                if items: return "\n".join(items)
+        return "⚠️ Kunde inte läsa dagens meny."
+    except:
+        return "❌ Tekniskt fel."
 
 async def main():
-    if get_swedish_day() in ["Lördag", "Söndag"]: return
+    if datetime.now().weekday() >= 5: return # Helg-check
+    
     bot = Bot(token=TOKEN)
-    
-    # Hämta och skicka
-    sodra = scrape_sodra_porten()
-    etage = scrape_nya_etage()
-    
     msg = (
-        f"🍴 *LUNCH {get_swedish_day().upper()}* 🍴\n\n"
-        f"📍 *Södra Porten*\n{sodra}\n\n"
-        f"📍 *Nya Etage*\n{etage}\n\n"
+        f"🍴 *LUNCH {['MÅNDAG','TISDAG','ONSDAG','TORSDAG','FREDAG'][datetime.now().weekday()]}* 🍴\n\n"
+        f"📍 *Nya Etage*\n{scrape_nya_etage()}\n\n"
+        f"📍 *Södra Porten*\n{scrape_sodra_porten()}\n\n"
         "Smaklig måltid!"
     )
     
