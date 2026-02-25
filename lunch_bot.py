@@ -51,41 +51,39 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        # Vi går direkt mot Compass Groups API istället för att skrapa hemsidan
-        # Detta är mycket mer stabilt och blockeras inte
+        # Vi går direkt mot Compass Groups API - ID 517 verkar vara det korrekta för Södra Porten i Mölndal
         api_url = "https://eu-central-1.aws.data.mongodb-api.com/app/compass-gastronomy-restaurants-puvoc/endpoint/get_menu"
         params = {
-            'restaurant_id': '650974892c556b6b3e700a89', # ID för Södra Porten
+            'restaurant_id': '650974892c556b6b3e700a89',
             'language': 'sv'
         }
         
         res = requests.get(api_url, params=params, timeout=15)
         if res.status_code != 200:
-            return "⚠️ Kunde inte hämta menyn från Södra Porten."
+            return "⚠️ API svarade inte (Felkod {}).".format(res.status_code)
             
         data = res.json()
         if not data or 'days' not in data:
-            return "⚠️ Ingen meny tillgänglig."
+            return "⚠️ Ingen meny tillgänglig i API."
             
-        # Hitta dagens meny i JSON-datan
         today_idx = datetime.now().weekday()
         if today_idx >= 5: return "Helg!"
         
-        # Compass API returnerar ofta menyer per vecka
+        # Hitta dagens data
         day_data = data['days'][today_idx]
         menu_items = []
         
         for menu in day_data.get('menus', []):
             dish = menu.get('menu_item_name', '')
             if dish:
-                # Rensa bort onödig text och lägg till punkt
-                clean_dish = dish.strip().replace('*', '').replace('_', '')
+                # Snygga till texten
+                clean_dish = dish.strip().replace('\r', '').replace('\n', ' ').replace('  ', ' ')
                 menu_items.append(f"• {clean_dish}")
                 
         return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades för idag."
         
     except Exception as e:
-        return f"❌ Fel Södra Porten: {str(e)}"
+        return f"❌ Fel Södra Porten API: {str(e)}"
 
 async def main():
     if datetime.now().weekday() >= 5: 
@@ -105,9 +103,11 @@ async def main():
     )
     
     try:
+        # Markdown kan vara känsligt, vi säkerställer enkel Markdown
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
     except Exception as e:
-        print(f"Telegram fel: {e}")
+        # Om det skiter sig med Markdown, skicka som vanlig text
+        await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', ''))
 
 if __name__ == "__main__":
     asyncio.run(main())
