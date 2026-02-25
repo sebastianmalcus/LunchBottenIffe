@@ -60,58 +60,61 @@ def scrape_sodra_porten():
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
         today = days[datetime.now().weekday()].lower()
         
-        menu_div = soup.find('div', class_='meny')
-        if not menu_div:
-            return "⚠️ Hittade inte meny-containern på sidan."
+        # 1. Hitta taggen för dagens namn, VAR DEN ÄN ÄR på hela sidan
+        day_tag = None
+        for tag in soup.find_all(['strong', 'b', 'h3', 'h4', 'div', 'p']):
+            if tag.get_text(strip=True).lower() == today:
+                day_tag = tag
+                break
+                
+        # Fallback om de skrivit typ "Onsdag 25/2"
+        if not day_tag:
+            for tag in soup.find_all(['strong', 'b', 'h3', 'h4']):
+                if tag.get_text(strip=True).lower().startswith(today):
+                    day_tag = tag
+                    break
+
+        if not day_tag:
+            return "⚠️ Hittade inte dagens rubrik på sidan."
 
         menu_items = []
-        capture = False
+        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "***", "husmanskost", "pogre"]
         
-        # Städa bort deras rubriker (exakt enligt din bild)
-        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "***", "husmanskost"]
-        
-        # Vi itererar exakt enligt ordningen i HTML-trädet på din bild
-        for child in menu_div.children:
+        # 2. Gå igenom all text och alla taggar som ligger DIREKT EFTER rubriken
+        for sibling in day_tag.next_siblings:
             text = ""
             
-            # 1. Om det är en tagg (t.ex. <strong>Onsdag</strong>)
-            if isinstance(child, Tag) and child.name in ['strong', 'b', 'h3', 'p']:
-                text = child.get_text(strip=True)
-            # 2. Om det är lös text (som maträtterna på din bild)
-            elif isinstance(child, NavigableString):
-                text = str(child).strip()
+            if isinstance(sibling, NavigableString):
+                text = str(sibling).strip()
+            elif isinstance(sibling, Tag):
+                # Om vi stöter på en tjock rubrik med NÄSTA dags namn, då är vi klara!
+                if sibling.name in ['strong', 'b', 'h3', 'h4']:
+                    sibling_text = sibling.get_text(strip=True).lower()
+                    if any(d.lower() in sibling_text for d in days if d.lower() != today):
+                        break 
                 
+                # Plocka text från vanliga taggar, strunta i <br> och <i>
+                if sibling.name not in ['br', 'i', 'hr']:
+                    text = sibling.get_text(strip=True)
+                    
             if not text:
                 continue
-
-            lower_text = text.lower().replace(':', '')
+                
+            clean_text = text.replace('*', '').replace('_', '').replace('"', '')
+            lower_clean = clean_text.lower()
             
-            # Kolla om vi hittar en dag
-            matched_day = False
-            for d in days:
-                if lower_text == d.lower() or lower_text.startswith(d.lower()):
-                    matched_day = True
-                    if d.lower() == today:
-                        capture = True
-                    else:
-                        capture = False # Vi har nått en annan dag
-                    break
-                    
-            if matched_day:
-                continue
+            # För säkerhets skull: Om texten i sig är ett dagnamn, sluta leta
+            if any(lower_clean == d.lower() for d in days if d.lower() != today):
+                break
                 
-            # 3. Fånga BARA den rena texten (NavigableString), detta hoppar över <i>pogre</i> och <br> automatiskt!
-            if capture and isinstance(child, NavigableString) and len(text) > 8:
-                clean_text = text.replace('*', '').replace('_', '')
-                lower_clean = clean_text.lower()
-                
-                # Sålla bort "Grönt och gott" osv
-                if not any(lower_clean.startswith(iw) for iw in ignore_words):
+            # 3. Sortera ut rätterna från skräpet
+            if len(clean_text) > 8:
+                if not any(lower_clean.startswith(iw) for iw in ignore_words) and lower_clean not in ignore_words:
                     item = f"• {clean_text}"
                     if item not in menu_items:
                         menu_items.append(item)
                         
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades för idag."
+        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades under rubriken."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
 
