@@ -1,7 +1,7 @@
 import asyncio
 import requests
 import os
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from datetime import datetime
 from telegram import Bot
 
@@ -52,58 +52,66 @@ def scrape_nya_etage():
 def scrape_sodra_porten():
     try:
         url = "https://sodraporten.kvartersmenyn.se/"
-        # En extremt robust User-Agent så Kvartersmenyn tror vi är Chrome på Windows
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36'}
         res = requests.get(url, timeout=15, headers=headers)
         res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        if not soup.body:
-            return "⚠️ Kunde inte ladda sidan (blockerad?)."
-
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
         today = days[datetime.now().weekday()].lower()
         
-        # Hämta ALL text från hela sidan och dela upp den rad för rad
-        all_text = soup.body.get_text(separator='\n', strip=True)
-        lines = all_text.split('\n')
-        
+        menu_div = soup.find('div', class_='meny')
+        if not menu_div:
+            return "⚠️ Hittade inte meny-containern på sidan."
+
         menu_items = []
         capture = False
         
-        # Ord vi vill kasta i papperskorgen
-        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh market", "betala", "pris", "pogre", "inkl.", "öppet:", "husmanskost"]
+        # Städa bort deras rubriker (exakt enligt din bild)
+        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "***", "husmanskost"]
         
-        for line in lines:
-            clean_line = line.strip().replace('*', '').replace('_', '')
-            lower_line = clean_line.lower()
+        # Vi itererar exakt enligt ordningen i HTML-trädet på din bild
+        for child in menu_div.children:
+            text = ""
             
-            # Kolla om raden är en veckodag (ex "Onsdag" eller "Onsdag:")
-            is_day_header = False
+            # 1. Om det är en tagg (t.ex. <strong>Onsdag</strong>)
+            if isinstance(child, Tag) and child.name in ['strong', 'b', 'h3', 'p']:
+                text = child.get_text(strip=True)
+            # 2. Om det är lös text (som maträtterna på din bild)
+            elif isinstance(child, NavigableString):
+                text = str(child).strip()
+                
+            if not text:
+                continue
+
+            lower_text = text.lower().replace(':', '')
+            
+            # Kolla om vi hittar en dag
+            matched_day = False
             for d in days:
-                if lower_line == d.lower() or lower_line.startswith(d.lower() + ":"):
-                    is_day_header = True
-                    if lower_line.startswith(today):
+                if lower_text == d.lower() or lower_text.startswith(d.lower()):
+                    matched_day = True
+                    if d.lower() == today:
                         capture = True
                     else:
-                        capture = False
-                    break
-            
-            if is_day_header:
-                continue # Gå till nästa rad så vi inte skriver ut själva ordet "Onsdag"
-                
-            if capture and len(clean_line) > 8:
-                # Kolla om vi nått botten av sidan/menyn
-                if "inkl. smör" in lower_line or "öppet:" in lower_line or "pris fr" in lower_line:
+                        capture = False # Vi har nått en annan dag
                     break
                     
-                # Rensa bort skräp-rubrikerna
-                if not any(lower_line.startswith(iw) for iw in ignore_words) and lower_line not in ignore_words:
-                    item = f"• {clean_line}"
+            if matched_day:
+                continue
+                
+            # 3. Fånga BARA den rena texten (NavigableString), detta hoppar över <i>pogre</i> och <br> automatiskt!
+            if capture and isinstance(child, NavigableString) and len(text) > 8:
+                clean_text = text.replace('*', '').replace('_', '')
+                lower_clean = clean_text.lower()
+                
+                # Sålla bort "Grönt och gott" osv
+                if not any(lower_clean.startswith(iw) for iw in ignore_words):
+                    item = f"• {clean_text}"
                     if item not in menu_items:
                         menu_items.append(item)
                         
-        return "\n".join(menu_items) if menu_items else "⚠️ Hittade text men inga maträtter för idag."
+        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades för idag."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
 
