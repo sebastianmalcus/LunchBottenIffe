@@ -51,67 +51,58 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        target_url = "https://sodraporten.kvartersmenyn.se/"
-        html_content = ""
-        
-        # Försök 1: Direkt anrop med ordentlig förklädnad
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'sv,en-US;q=0.7,en;q=0.3'
-        }
-        
-        res = requests.get(target_url, timeout=10, headers=headers)
-        if res.status_code == 200:
-            res.encoding = 'utf-8'
-            html_content = res.text
-        else:
-            # Försök 2: Använd CodeTabs som en ny, starkare tunnel
-            proxy_url = f"https://api.codetabs.com/v1/proxy?quest={target_url}"
-            res_proxy = requests.get(proxy_url, timeout=20)
-            
-            if res_proxy.status_code == 200:
-                html_content = res_proxy.text
-            else:
-                return f"⚠️ Både direktlänk (Fel {res.status_code}) och tunnel (Fel {res_proxy.status_code}) blockerades."
-
-        soup = BeautifulSoup(html_content, 'html.parser')
+        # NYA OFFICIELLA LÄNKEN
+        url = "https://www.compass-group.se/restauranger-och-menyer/ovriga-restauranger/sodra-porten/"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, timeout=15, headers=headers)
+        res.encoding = 'utf-8'
+        soup = BeautifulSoup(res.text, 'html.parser')
         
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
         today_str = days[datetime.now().weekday()].lower()
         
-        # 1. Hitta menylådan
-        menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
-        
-        if not menu_div:
-            # Reservplan
-            day_tag = soup.find(lambda t: t.name in ['strong', 'b', 'h3', 'h4'] and today_str.lower() in t.get_text().lower())
-            if day_tag:
-                menu_div = day_tag.parent
-                
-        if not menu_div:
-            return "⚠️ Hittade inte meny-containern på sidan."
+        # 1. Sök upp rätt veckodag
+        day_tag = soup.find(lambda t: t.name in ['h2', 'h3', 'h4', 'span', 'strong', 'div', 'button'] and t.get_text(strip=True).lower() == today_str)
+        if not day_tag:
+            day_tag = soup.find(lambda t: t.name in ['h2', 'h3', 'h4', 'span', 'strong', 'div', 'button'] and t.get_text(strip=True).lower().startswith(today_str))
 
-        # 2. Platta till <br>-taggarna till riktiga radbrytningar
-        for br in menu_div.find_all('br'):
-            br.replace_with('\n')
+        if not day_tag:
+            return "⚠️ Hittade inte dagens rubrik på nya hemsidan."
             
-        text_content = menu_div.get_text(separator='\n')
-        lines = [line.strip() for line in text_content.split('\n') if line.strip()]
-        
+        # 2. Hitta boxen som innehåller maten (Gå uppåt i koden tills vi hittar en div med mycket text)
+        container = day_tag.parent
+        for _ in range(4):
+            if container and len(container.get_text(strip=True)) > 150:
+                break
+            container = container.parent if container else None
+            
+        if not container:
+            container = soup.body
+
         menu_items = []
         capture = False
-        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "***", "husmanskost", "pogre"]
         
-        # 3. Filtrera raderna
-        for line in lines:
-            lower_line = line.lower()
+        # Ord vi vill kasta i papperskorgen (Compass Group har mycket näringsinfo vi inte vill visa)
+        ignore_words = [
+            "grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", 
+            "klimatpåverkan", "energifördelning", "andel av", "stäng", "välkomna", "tel:"
+        ]
+        
+        # 3. Läs texten
+        for text in container.stripped_strings:
+            clean_text = text.replace('\xa0', ' ').replace('*', '').replace('_', '').replace('"', '').strip()
+            if not clean_text:
+                continue
+                
+            lower_text = clean_text.lower()
             
+            # Är det en veckodag?
             is_day = False
             for d in days:
-                if lower_line == d.lower() or lower_line.startswith(d.lower() + ":"):
+                dl = d.lower()
+                if lower_text == dl or lower_text.startswith(dl + ":") or lower_text.startswith(dl + " "):
                     is_day = True
-                    if d.lower() == today_str.lower():
+                    if dl == today_str:
                         capture = True
                     else:
                         capture = False
@@ -121,16 +112,15 @@ def scrape_sodra_porten():
                 continue
                 
             if capture:
-                if "inkl" in lower_line or "öppet" in lower_line or "pris fr" in lower_line:
-                    break
-                    
-                if len(line) > 8:
-                    if not any(lower_line.startswith(iw) for iw in ignore_words) and lower_line not in ignore_words:
-                        clean_line = line.replace('*', '').replace('_', '').replace('"', '').strip()
-                        if f"• {clean_line}" not in menu_items:
-                            menu_items.append(f"• {clean_line}")
-                            
-        return "\n".join(menu_items) if menu_items else "⚠️ Koden läste rutan men hittade inga rätter."
+                # Filtrera och plocka maten
+                if len(clean_text) > 10:
+                    if not any(lower_text.startswith(iw) for iw in ignore_words):
+                        # Extra säkerhet för att ta bort Compass Groups specifika näringsinfo
+                        if "klimatpåverkan" not in lower_text and "dagligt behov" not in lower_text:
+                            if f"• {clean_text}" not in menu_items:
+                                menu_items.append(f"• {clean_text}")
+                                
+        return "\n".join(menu_items) if menu_items else "⚠️ Koden läste nya rutan men hittade inga rätter."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
 
