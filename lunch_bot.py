@@ -51,8 +51,7 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        # Detta är den stabila API-vägen för Matilda Platform (Mashie)
-        # ID:t e648ad20... är det som styr Södra Porten
+        # API-väg för Matilda Platform baserat på verifierat ID
         url = "https://menu.matildaplatform.com/api/v1/public/menus/e648ad20-80fd-4f24-a7b2-0f2d67d2b44d/days?range=0"
         
         headers = {
@@ -69,7 +68,7 @@ def scrape_sodra_porten():
         today_str = datetime.now().strftime('%Y-%m-%d')
         menu_items = []
         
-        # Leta upp dagens datum i listan från API:et
+        # Matchar dagens datum i API-svaret
         for day in data:
             if day.get('date', '').split('T')[0] == today_str:
                 for menu in day.get('menus', []):
@@ -78,7 +77,7 @@ def scrape_sodra_porten():
                     
                     if dish:
                         clean_dish = dish.strip().replace('\r', '').replace('\n', ' ').replace('  ', ' ')
-                        # Snygga till vegetariskt baserat på kategori eller innehåll
+                        # Tydligare märkning av vegetariska alternativ
                         if "grönt" in category.lower() or "vegetarisk" in clean_dish.lower():
                             menu_items.append(f"🥗 *Veg:* {clean_dish}")
                         else:
@@ -110,7 +109,7 @@ async def main():
     try:
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
     except Exception:
-        # Fallback utan Markdown-stjärnor om texten innehåller tecken som krockar
+        # Fallback om Markdown-tecken orsakar fel
         await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', ''))
 
 if __name__ == "__main__":
