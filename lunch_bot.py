@@ -1,7 +1,7 @@
 import asyncio
 import requests
 import os
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup
 from datetime import datetime
 from telegram import Bot
 
@@ -59,38 +59,40 @@ def scrape_sodra_porten():
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
         today = days[datetime.now().weekday()]
         
-        # 1. Hitta <strong> med dagens namn (precis som på din bild)
-        day_tag = soup.find(lambda t: t.name in ['strong', 'b', 'h3'] and today.lower() in t.get_text(strip=True).lower())
+        # Din bild visade att de använder class="meny"
+        menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
         
-        if not day_tag:
-            return "⚠️ Hittade inte dagens rubrik på sidan."
+        if not menu_div:
+            return "⚠️ Hittade inte meny-containern på sidan."
 
         menu_items = []
-        # Ord vi ska rensa bort
-        ignore_words = ["grönt och gott", "dagens husman", "sallad", "action", "fresh market", "betala efter", "***husmanskostens"]
+        capture = False
         
-        # 2. Stega igenom allt som kommer EFTER <strong>-taggen
-        current = day_tag.next_sibling
+        # Ord vi vill rensa bort så att de inte dyker upp som "maträtter"
+        ignore_words = ["grönt och gott", "dagens husman", "sallad", "action", "fresh market", "betala efter", "***husmanskostens", "pogre"]
         
-        while current:
-            # Avbryt om vi plötsligt stöter på nästa dags rubrik
-            if current.name in ['strong', 'b', 'h3']:
-                break
-                
-            # NavigableString = Bara den rena texten (ignorerar <br> och osynliga <i>-taggar)
-            if isinstance(current, NavigableString):
-                text = current.strip()
-                
-                # Om texten i sig är ett annat dagsnamn, avbryt
-                if any(d.lower() == text.lower() for d in days if d.lower() != today.lower()):
-                    break
-                    
-                if len(text) > 5 and not any(text.lower().startswith(iw) for iw in ignore_words):
-                    if f"• {text}" not in menu_items:
-                        menu_items.append(f"• {text}")
-                        
-            current = current.next_sibling
+        # stripped_strings drar ut all ren text, ignorerar <br> och fula taggar
+        for text in menu_div.stripped_strings:
+            text_clean = text.strip()
+            text_lower = text_clean.lower()
             
+            # Kolla om ordet är en veckodag
+            if text_lower in [d.lower() for d in days]:
+                if text_lower == today.lower():
+                    capture = True  # Vi hittade dagens dag! Börja samla rätter.
+                    continue
+                elif capture:
+                    break # Vi nådde NÄSTA dag! Sluta samla.
+                else:
+                    continue # Det är en dag i förflutna, ignorera.
+                    
+            # Om vi befinner oss under dagens rubrik
+            if capture and len(text_clean) > 4:
+                # Filtrera bort deras tråkiga underrubriker och osynliga fällor ("pogre")
+                if not any(text_lower.startswith(iw) for iw in ignore_words) and text_lower not in ignore_words:
+                    if f"• {text_clean}" not in menu_items:
+                        menu_items.append(f"• {text_clean}")
+                        
         return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades under dagen."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
