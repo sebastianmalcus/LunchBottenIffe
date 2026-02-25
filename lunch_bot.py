@@ -52,21 +52,29 @@ def scrape_nya_etage():
 def scrape_sodra_porten():
     try:
         target_url = "https://sodraporten.kvartersmenyn.se/"
-        # Vi använder AllOrigins som en tunnel för att komma runt IP-blockeringen!
-        proxy_url = f"https://api.allorigins.win/get?url={target_url}"
+        html_content = ""
         
-        res = requests.get(proxy_url, timeout=20)
+        # Försök 1: Direkt anrop med ordentlig förklädnad
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'sv,en-US;q=0.7,en;q=0.3'
+        }
         
-        if res.status_code != 200:
-            return f"⚠️ Tunneln svarade inte (Felkod {res.status_code})."
+        res = requests.get(target_url, timeout=10, headers=headers)
+        if res.status_code == 200:
+            res.encoding = 'utf-8'
+            html_content = res.text
+        else:
+            # Försök 2: Använd CodeTabs som en ny, starkare tunnel
+            proxy_url = f"https://api.codetabs.com/v1/proxy?quest={target_url}"
+            res_proxy = requests.get(proxy_url, timeout=20)
             
-        # Packa upp den gömda webbsidan
-        data = res.json()
-        html_content = data.get('contents', '')
-        
-        if not html_content:
-            return "⚠️ Kunde inte hämta sidan genom tunneln."
-            
+            if res_proxy.status_code == 200:
+                html_content = res_proxy.text
+            else:
+                return f"⚠️ Både direktlänk (Fel {res.status_code}) och tunnel (Fel {res_proxy.status_code}) blockerades."
+
         soup = BeautifulSoup(html_content, 'html.parser')
         
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
@@ -76,7 +84,7 @@ def scrape_sodra_porten():
         menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
         
         if not menu_div:
-            # Reservplan: Leta efter rubriken och ta dess låda
+            # Reservplan
             day_tag = soup.find(lambda t: t.name in ['strong', 'b', 'h3', 'h4'] and today_str.lower() in t.get_text().lower())
             if day_tag:
                 menu_div = day_tag.parent
@@ -84,7 +92,7 @@ def scrape_sodra_porten():
         if not menu_div:
             return "⚠️ Hittade inte meny-containern på sidan."
 
-        # 2. Den platta metoden: Gör om <br> till radbrytningar
+        # 2. Platta till <br>-taggarna till riktiga radbrytningar
         for br in menu_div.find_all('br'):
             br.replace_with('\n')
             
@@ -95,30 +103,27 @@ def scrape_sodra_porten():
         capture = False
         ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "***", "husmanskost", "pogre"]
         
-        # 3. Läs rad för rad
+        # 3. Filtrera raderna
         for line in lines:
             lower_line = line.lower()
             
-            # Kolla om raden är en veckodag
             is_day = False
             for d in days:
                 if lower_line == d.lower() or lower_line.startswith(d.lower() + ":"):
                     is_day = True
                     if d.lower() == today_str.lower():
-                        capture = True # Dagens meny startar!
+                        capture = True
                     else:
-                        capture = False # Vi nådde nästa dag!
+                        capture = False
                     break
                     
             if is_day:
                 continue
                 
             if capture:
-                # Kolla om vi nått botten av menyn
                 if "inkl" in lower_line or "öppet" in lower_line or "pris fr" in lower_line:
                     break
                     
-                # Rensa och spara rätterna
                 if len(line) > 8:
                     if not any(lower_line.startswith(iw) for iw in ignore_words) and lower_line not in ignore_words:
                         clean_line = line.replace('*', '').replace('_', '').replace('"', '').strip()
