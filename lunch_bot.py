@@ -25,9 +25,7 @@ def scrape_sodra_porten():
         
         if target:
             menu_items = []
-            # Kvartersmenyn lägger ofta rätterna i efterföljande p-taggar eller i en div
-            container = target.find_next(['div', 'p'])
-            # Vi plockar de kommande 8 p-taggarna (räcker gott för en lunchmeny)
+            # Kvartersmenyn lägger ofta rätterna i efterföljande p-taggar
             current = target.find_next('p')
             count = 0
             while current and count < 10:
@@ -54,13 +52,12 @@ def scrape_nya_etage():
         day_name = get_swedish_day()
         
         # Nya Etage har "Onsdag IDAG". Vi letar efter containern som har dagens namn.
-        # Vi söker i alla h3 (som används i deras boxar)
-        day_box = soup.find(lambda t: t.name == 'h3' and day_name.lower() in t.get_text().lower())
+        day_box_header = soup.find(lambda t: t.name == 'h3' and day_name.lower() in t.get_text().lower())
         
-        if day_box:
-            # Gå upp till föräldern (boxen) och hitta alla list-objekt eller p-taggar
-            parent = day_box.find_parent('div')
-            if not parent: parent = day_box.parent
+        if day_box_header:
+            # Gå upp till boxen (div) och hitta alla rader
+            parent = day_box_header.find_parent('div')
+            if not parent: parent = day_box_header.parent
             
             items = parent.find_all(['li', 'p'])
             menu_text = []
