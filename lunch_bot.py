@@ -51,8 +51,8 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        # Den här länken är den heliga graalen för Mashie-menyer
-        # Baserat på din bild är namnet "Södra porten" och ID "e648ad20-80fd-4f24-a7b2-0f2d67d2b44d"
+        # Den korrekta URL:en extraherad från dina Inspect-bilder
+        # Vi använder den officiella Compass-portalen för Mashie
         url = "https://compass.mashie.matildaplatform.com/api/v1/public/menus/e648ad20-80fd-4f24-a7b2-0f2d67d2b44d/days?range=0"
         
         headers = {
@@ -60,40 +60,39 @@ def scrape_sodra_porten():
             'Accept': 'application/json'
         }
         
-        res = requests.get(url, headers=headers, timeout=15)
-        
-        # Om den vanliga länken sviker, testar vi en alternativ slutpunkt
-        if res.status_code != 200:
-            url_alt = "https://mashie.matildaplatform.com/api/v1/public/menus/e648ad20-80fd-4f24-a7b2-0f2d67d2b44d/days?range=0"
-            res = requests.get(url_alt, headers=headers, timeout=15)
+        # Vi testar två olika bas-adresser ifall den ena blockeras av DNS-fel
+        try:
+            res = requests.get(url, headers=headers, timeout=15)
+        except:
+            alt_url = "https://mashie.matildaplatform.com/api/v1/public/menus/e648ad20-80fd-4f24-a7b2-0f2d67d2b44d/days?range=0"
+            res = requests.get(alt_url, headers=headers, timeout=15)
 
         if res.status_code != 200:
-            return f"⚠️ Mashie-API svarade inte (Kod {res.status_code})"
+            return f"⚠️ Mashie-plattformen svarade inte (Kod {res.status_code})"
             
         data = res.json()
         today_str = datetime.now().strftime('%Y-%m-%d')
         menu_items = []
         
         for day in data:
-            # Vi kollar om detta objekt är för idag
             if day.get('date', '').split('T')[0] == today_str:
                 for menu in day.get('menus', []):
                     dish = menu.get('description', '')
-                    category = menu.get('name', '') # T.ex. "Grönt och Gott"
+                    category = menu.get('name', '')
                     
                     if dish:
                         clean_dish = dish.strip().replace('\r', '').replace('\n', ' ').replace('  ', ' ')
-                        # Snygga till vegetariskt
+                        # Snyggare kategorisering för Södra Porten
                         if "grönt" in category.lower() or "vegetarisk" in clean_dish.lower():
                             menu_items.append(f"🥗 *Veg:* {clean_dish}")
                         else:
                             menu_items.append(f"• {clean_dish}")
                 break
         
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades i Mashie-datan för idag."
+        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades i systemet för idag."
         
     except Exception as e:
-        return f"❌ Fel Södra Porten: {str(e)}"
+        return f"❌ Tekniskt fel: {str(e)}"
 
 async def main():
     if datetime.now().weekday() >= 5: 
@@ -115,7 +114,7 @@ async def main():
     try:
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
     except Exception:
-        # Fallback utan stjärnor om det blir knas med formateringen
+        # Om specialtecken förstör Markdown, skicka som vanlig text
         await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', ''))
 
 if __name__ == "__main__":
