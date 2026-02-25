@@ -51,39 +51,40 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        # Vi går direkt mot Compass Groups API - ID 517 verkar vara det korrekta för Södra Porten i Mölndal
-        api_url = "https://eu-central-1.aws.data.mongodb-api.com/app/compass-gastronomy-restaurants-puvoc/endpoint/get_menu"
-        params = {
-            'restaurant_id': '650974892c556b6b3e700a89',
-            'language': 'sv'
-        }
+        # Den här länken går direkt till Mashies dolda meny-JSON för Södra Porten
+        # Vi använder det ID (e648ad20) som syns i din iframe-bild!
+        url = "https://compass.mashie.matildaplatform.com/api/v1/public/menus/e648ad20-80fd-4f24-a7b2-0f2d67d2b44d/days?range=0"
         
-        res = requests.get(api_url, params=params, timeout=15)
+        res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         if res.status_code != 200:
-            return "⚠️ API svarade inte (Felkod {}).".format(res.status_code)
+            return f"⚠️ Mashie-systemet svarade inte (Kod {res.status_code})"
             
         data = res.json()
-        if not data or 'days' not in data:
-            return "⚠️ Ingen meny tillgänglig i API."
-            
-        today_idx = datetime.now().weekday()
-        if today_idx >= 5: return "Helg!"
         
-        # Hitta dagens data
-        day_data = data['days'][today_idx]
+        # Vi letar efter dagens datum
+        today_str = datetime.now().strftime('%Y-%m-%d')
         menu_items = []
         
-        for menu in day_data.get('menus', []):
-            dish = menu.get('menu_item_name', '')
-            if dish:
-                # Snygga till texten
-                clean_dish = dish.strip().replace('\r', '').replace('\n', ' ').replace('  ', ' ')
-                menu_items.append(f"• {clean_dish}")
-                
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades för idag."
+        for day in data:
+            if day.get('date', '').split('T')[0] == today_str:
+                for menu in day.get('menus', []):
+                    # Mashie har rätten i 'description'
+                    dish = menu.get('description', '')
+                    category = menu.get('name', '') # T.ex. "Grönt och Gott"
+                    
+                    if dish:
+                        clean_dish = dish.strip().replace('\r', '').replace('\n', ' ')
+                        # Snygga till så att kategorin syns om det är vegetariskt
+                        if "grönt" in category.lower() or "vegetarisk" in dish.lower():
+                            menu_items.append(f"🥗 *Veg:* {clean_dish}")
+                        else:
+                            menu_items.append(f"• {clean_dish}")
+                break
+        
+        return "\n".join(menu_items) if menu_items else "⚠️ Hittade inga rätter i Mashie-datan för idag."
         
     except Exception as e:
-        return f"❌ Fel Södra Porten API: {str(e)}"
+        return f"❌ Fel Södra Porten (Mashie): {str(e)}"
 
 async def main():
     if datetime.now().weekday() >= 5: 
@@ -103,10 +104,9 @@ async def main():
     )
     
     try:
-        # Markdown kan vara känsligt, vi säkerställer enkel Markdown
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
     except Exception as e:
-        # Om det skiter sig med Markdown, skicka som vanlig text
+        # Fallback ifall Markdown strular (t.ex. pga specialtecken i menyn)
         await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', ''))
 
 if __name__ == "__main__":
