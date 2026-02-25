@@ -51,30 +51,27 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        # Den här länken går direkt till Mashies dolda meny-JSON för Södra Porten
-        # Vi använder det ID (e648ad20) som syns i din iframe-bild!
-        url = "https://compass.mashie.matildaplatform.com/api/v1/public/menus/e648ad20-80fd-4f24-a7b2-0f2d67d2b44d/days?range=0"
+        # Detta ID är hämtat direkt från din skärmdump av iframen
+        menu_id = "e648ad20-80fd-4f24-a7b2-0f2d67d2b44d"
+        url = f"https://compass.mashie.matildaplatform.com/api/v1/public/menus/{menu_id}/days?range=0"
         
         res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         if res.status_code != 200:
-            return f"⚠️ Mashie-systemet svarade inte (Kod {res.status_code})"
+            return f"⚠️ Mashie svarade inte (Kod {res.status_code})"
             
         data = res.json()
-        
-        # Vi letar efter dagens datum
         today_str = datetime.now().strftime('%Y-%m-%d')
         menu_items = []
         
         for day in data:
             if day.get('date', '').split('T')[0] == today_str:
                 for menu in day.get('menus', []):
-                    # Mashie har rätten i 'description'
                     dish = menu.get('description', '')
-                    category = menu.get('name', '') # T.ex. "Grönt och Gott"
+                    category = menu.get('name', '')
                     
                     if dish:
                         clean_dish = dish.strip().replace('\r', '').replace('\n', ' ')
-                        # Snygga till så att kategorin syns om det är vegetariskt
+                        # Markera vegetariska alternativ tydligt
                         if "grönt" in category.lower() or "vegetarisk" in dish.lower():
                             menu_items.append(f"🥗 *Veg:* {clean_dish}")
                         else:
@@ -105,8 +102,8 @@ async def main():
     
     try:
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
-    except Exception as e:
-        # Fallback ifall Markdown strular (t.ex. pga specialtecken i menyn)
+    except Exception:
+        # Fallback ifall Markdown-formateringen skulle orsaka fel
         await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', ''))
 
 if __name__ == "__main__":
