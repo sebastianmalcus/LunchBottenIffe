@@ -52,48 +52,47 @@ def scrape_nya_etage():
 def scrape_sodra_porten():
     try:
         url = "https://sodraporten.kvartersmenyn.se/"
-        res = requests.get(url, timeout=15)
+        # Låtsas vara en riktig webbläsare för att undvika att bli blockerad
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, timeout=15, headers=headers)
         res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
         
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
-        today = days[datetime.now().weekday()]
+        today = days[datetime.now().weekday()].lower()
         
-        # Din bild visade att de använder class="meny"
-        menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
-        
-        if not menu_div:
-            return "⚠️ Hittade inte meny-containern på sidan."
-
         menu_items = []
         capture = False
         
-        # Ord vi vill rensa bort så att de inte dyker upp som "maträtter"
-        ignore_words = ["grönt och gott", "dagens husman", "sallad", "action", "fresh market", "betala efter", "***husmanskostens", "pogre"]
+        # Städa bort deras rubriker och skräpord
+        ignore_words = ["grönt och gott", "dagens husman", "sallad", "action", "fresh market", "betala efter", "***husmanskostens", "pogre", "pris fr"]
         
-        # stripped_strings drar ut all ren text, ignorerar <br> och fula taggar
-        for text in menu_div.stripped_strings:
+        # Vi läser all text på hela webbsidan som en bok, uppifrån och ner
+        for text in soup.stripped_strings:
             text_clean = text.strip()
             text_lower = text_clean.lower()
             
-            # Kolla om ordet är en veckodag
+            # Kollar om vi stöter på en ensam veckodag
             if text_lower in [d.lower() for d in days]:
-                if text_lower == today.lower():
-                    capture = True  # Vi hittade dagens dag! Börja samla rätter.
+                if text_lower == today:
+                    capture = True  # Nu börjar dagens meny!
                     continue
                 elif capture:
-                    break # Vi nådde NÄSTA dag! Sluta samla.
+                    break  # Vi nådde nästa dags meny, sluta kopiera!
                 else:
-                    continue # Det är en dag i förflutna, ignorera.
+                    continue  # En gammal dag, ignorera
                     
-            # Om vi befinner oss under dagens rubrik
             if capture and len(text_clean) > 4:
-                # Filtrera bort deras tråkiga underrubriker och osynliga fällor ("pogre")
+                # Kolla om vi nått botten av menyn (t.ex. på fredagar)
+                if "inkl. smör" in text_lower or "öppet:" in text_lower or "pris fr" in text_lower:
+                    break
+                    
+                # Ta bort deras rubriker
                 if not any(text_lower.startswith(iw) for iw in ignore_words) and text_lower not in ignore_words:
                     if f"• {text_clean}" not in menu_items:
                         menu_items.append(f"• {text_clean}")
                         
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades under dagen."
+        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades för idag."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
 
