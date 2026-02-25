@@ -1,0 +1,29 @@
+name: Skicka Lunchmeny
+
+on:
+  schedule:
+    # Körs kl 09:30 UTC (vilket är 10:30 svensk tid) varje vardag
+    - cron: '30 9 * * 1-5'
+  workflow_dispatch: # Gör att du kan starta den manuellt för test
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kod
+        uses: actions/checkout@v3
+
+      - name: Installera Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Installera beroenden
+        run: |
+          pip install -r requirements.txt
+
+      - name: Kör lunchskriptet
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python lunch_bot.py
