@@ -11,27 +11,18 @@ CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 def get_day_number():
     return datetime.now().weekday() + 1
 
-def fix_encoding(text):
-    # En rejäl tvätt för att tvinga fram ÅÄÖ om requests misslyckas
-    try:
-        return text.encode('latin1').decode('utf-8')
-    except:
-        return text
-
 def scrape_nya_etage():
     try:
         url = "https://nyaetage.se/"
-        # Vi använder en session för att vara mer stabila
-        session = requests.Session()
-        res = session.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+        res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         
-        # Tvinga UTF-8 direkt på innehållet
-        res.encoding = res.apparent_encoding
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='utf-8')
+        # Detta är magin som fixar "hÃ¶grevsburger"
+        res.encoding = 'utf-8' 
         
+        soup = BeautifulSoup(res.text, 'html.parser')
         day_num = get_day_number()
-        day_card = soup.find('div', attrs={'data-day': str(day_num)})
         
+        day_card = soup.find('div', attrs={'data-day': str(day_num)})
         if not day_card:
             return "⚠️ Hittade inte dagens meny-kort."
 
@@ -39,29 +30,29 @@ def scrape_nya_etage():
         if not items_container:
             return "⚠️ Hittade inte rätterna i boxen."
 
-        # Hitta alla rader med mat
-        rows = items_container.find_all('p')
         dagens = []
         veggo = ""
-
-        for row in rows:
-            text = row.get_text(strip=True).lstrip('>').strip()
-            if not text or len(text) < 3:
-                continue
+        
+        # 'stripped_strings' drar ut ALL text i boxen, oavsett vilka dolda taggar de ligger i
+        for text in items_container.stripped_strings:
+            text = text.lstrip('>').lstrip('•').strip()
             
-            # Sortera Veg/Vegan
-            if "veg/" in text.lower() or "vegan" in text.lower():
-                veggo = f"\n🥗 *Veg/Vegan*\n• {text}"
-            else:
-                dagens.append(f"• {text}")
+            if len(text) > 5 and text.lower() != "idag":
+                if "veg/" in text.lower() or "vegan" in text.lower():
+                    if text not in veggo: # Förhindra dubbletter
+                        veggo = f"\n🥗 *Vegetariskt*\n• {text}"
+                else:
+                    if f"• {text}" not in dagens:
+                        dagens.append(f"• {text}")
 
-        if not dagens and not veggo:
-            return "⚠️ Tomt i containern."
-
-        return "\n".join(dagens) + veggo
+        meny = "\n".join(dagens)
+        if veggo:
+            meny += veggo
+            
+        return meny if meny else "⚠️ Inga rätter hittades."
 
     except Exception as e:
-        return f"❌ Fel: {str(e)}"
+        return f"❌ Fel vid skrapning: {str(e)}"
 
 def scrape_sodra_porten():
     try:
@@ -71,22 +62,39 @@ def scrape_sodra_porten():
         soup = BeautifulSoup(res.text, 'html.parser')
         
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
-        current_day = days[datetime.now().weekday()]
+        today = days[datetime.now().weekday()]
         
-        # Letar efter rubriken
-        header = soup.find(lambda t: t.name in ["h3", "h4"] and current_day.lower() in t.get_text().lower())
-        if header:
-            menu_div = header.find_next_sibling('div')
-            if menu_div:
-                items = []
-                for p in menu_div.find_all('p'):
-                    txt = p.get_text(strip=True)
-                    if len(txt) > 5:
-                        items.append(f"• {txt}")
-                return "\n".join(items) if items else "Hittade inga rätter."
-        return "Menyn inte uppdaterad än."
-    except:
-        return "Kunde inte hämta menyn."
+        menu_div = soup.find('div', class_='menu_perc_div')
+        if not menu_div:
+            return "⚠️ Hittade inte menyn på sidan."
+            
+        # Vi gör om hela deras meny till en ren textlista
+        lines = list(menu_div.stripped_strings)
+        
+        today_menu = []
+        capture = False
+        # Ord vi vill rensa bort så att de inte dyker upp som "maträtter"
+        ignore_words = ["grönt och gott", "dagens husman", "sallad", "action", "fresh market", "betala efter vikt"]
+        
+        for line in lines:
+            # Börja kopiera rader när vi ser dagens namn
+            if line.lower() == today.lower():
+                capture = True
+                continue
+            
+            # Sluta kopiera om vi stöter på en annan veckodag
+            if capture and any(line.lower() == d.lower() for d in days if d.lower() != today.lower()):
+                break
+                
+            if capture and len(line) > 5:
+                # Skippa Kvartersmenyns egna underrubriker
+                if not any(line.lower().startswith(iw) for iw in ignore_words):
+                    if f"• {line}" not in today_menu:
+                        today_menu.append(f"• {line}")
+                        
+        return "\n".join(today_menu) if today_menu else "⚠️ Menyn ej uppdaterad än."
+    except Exception as e:
+        return f"❌ Fel: {str(e)}"
 
 async def main():
     if datetime.now().weekday() >= 5: return 
