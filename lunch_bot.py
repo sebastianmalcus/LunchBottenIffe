@@ -51,43 +51,58 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        # API-väg för Matilda Platform baserat på verifierat ID
-        url = "https://menu.matildaplatform.com/api/v1/public/menus/e648ad20-80fd-4f24-a7b2-0f2d67d2b44d/days?range=0"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
-            'Accept': 'application/json'
-        }
+        # Vi använder den direkta Mashie-länken som du hittade!
+        url = "https://compass.mashie.matildaplatform.com/public/app/s%C3%B6dra+porten/e64c2893?country=se"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
         
         res = requests.get(url, headers=headers, timeout=15)
+        res.encoding = 'utf-8'
+        soup = BeautifulSoup(res.text, 'html.parser')
         
-        if res.status_code != 200:
-            return f"⚠️ Södra Porten svarade inte (Kod {res.status_code})"
-            
-        data = res.json()
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        menu_items = []
+        # Mashie visar ofta flera dagar. Vi letar efter den panel som är "primary" (dagens) 
+        # eller matchar datumet.
+        today_date_str = datetime.now().strftime('%d %b').lower() # t.ex. "25 feb"
         
-        # Matchar dagens datum i API-svaret
-        for day in data:
-            if day.get('date', '').split('T')[0] == today_str:
-                for menu in day.get('menus', []):
-                    dish = menu.get('description', '')
-                    category = menu.get('name', '')
-                    
-                    if dish:
-                        clean_dish = dish.strip().replace('\r', '').replace('\n', ' ').replace('  ', ' ')
-                        # Tydligare märkning av vegetariska alternativ
-                        if "grönt" in category.lower() or "vegetarisk" in clean_dish.lower():
-                            menu_items.append(f"🥗 *Veg:* {clean_dish}")
-                        else:
-                            menu_items.append(f"• {clean_dish}")
+        # Hitta alla dags-paneler
+        panels = soup.find_all('div', class_='panel')
+        day_panel = None
+        
+        for p in panels:
+            header = p.find('div', class_='panel-heading')
+            if header and today_date_str in header.get_text().lower():
+                day_panel = p
                 break
         
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades i systemet för idag."
+        # Fallback: Om datumet inte matchar exakt, ta den första 'panel-primary'
+        if not day_panel:
+            day_panel = soup.find('div', class_='panel-primary')
+
+        if not day_panel:
+            return "⚠️ Hittade inte dagens meny-panel på sidan."
+
+        menu_items = []
+        # Varje rätt ligger i en div med klassen 'list-group-item-menu'
+        items = day_panel.find_all('div', class_='list-group-item-menu')
+        
+        for item in items:
+            # Kategorinamn (t.ex. "Grönt och Gott")
+            cat_tag = item.find('strong', class_='app-alternative-name')
+            # Själva rätten
+            dish_tag = item.find('div', class_='app-daymenu-name')
+            
+            if dish_tag:
+                dish_text = dish_tag.get_text(strip=True)
+                cat_text = cat_tag.get_text(strip=True) if cat_tag else ""
+                
+                if "grönt" in cat_text.lower():
+                    menu_items.append(f"🥗 *Veg:* {dish_text}")
+                else:
+                    menu_items.append(f"• {dish_text}")
+                    
+        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter extraherade."
         
     except Exception as e:
-        return f"❌ Tekniskt fel: {str(e)}"
+        return f"❌ Fel Södra Porten: {str(e)}"
 
 async def main():
     if datetime.now().weekday() >= 5: 
@@ -109,7 +124,6 @@ async def main():
     try:
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
     except Exception:
-        # Fallback om Markdown-tecken orsakar fel
         await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', ''))
 
 if __name__ == "__main__":
