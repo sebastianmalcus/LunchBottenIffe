@@ -52,54 +52,58 @@ def scrape_nya_etage():
 def scrape_sodra_porten():
     try:
         url = "https://sodraporten.kvartersmenyn.se/"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        # En extremt robust User-Agent så Kvartersmenyn tror vi är Chrome på Windows
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
         res = requests.get(url, timeout=15, headers=headers)
         res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
         
+        if not soup.body:
+            return "⚠️ Kunde inte ladda sidan (blockerad?)."
+
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
         today = days[datetime.now().weekday()].lower()
         
-        menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
-        if not menu_div:
-            return "⚠️ Hittade inte meny-containern på sidan."
-
+        # Hämta ALL text från hela sidan och dela upp den rad för rad
+        all_text = soup.body.get_text(separator='\n', strip=True)
+        lines = all_text.split('\n')
+        
         menu_items = []
         capture = False
         
-        # Aggressiv rensning av deras tråkiga underrubriker
-        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh market", "betala", "pris", "pogre"]
+        # Ord vi vill kasta i papperskorgen
+        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh market", "betala", "pris", "pogre", "inkl.", "öppet:", "husmanskost"]
         
-        for text in menu_div.stripped_strings:
-            clean_text = text.strip().replace('*', '').replace('_', '')
-            lower_text = clean_text.lower()
+        for line in lines:
+            clean_line = line.strip().replace('*', '').replace('_', '')
+            lower_line = clean_line.lower()
             
-            # Kolla om raden BÖRJAR med en veckodag (fångar även "Onsdag:" etc.)
-            matched_day = False
+            # Kolla om raden är en veckodag (ex "Onsdag" eller "Onsdag:")
+            is_day_header = False
             for d in days:
-                if lower_text.startswith(d.lower()):
-                    matched_day = True
-                    if d.lower() == today:
+                if lower_line == d.lower() or lower_line.startswith(d.lower() + ":"):
+                    is_day_header = True
+                    if lower_line.startswith(today):
                         capture = True
-                    elif capture:
-                        capture = False # Vi har nått nästa dag, stäng av!
+                    else:
+                        capture = False
                     break
-                    
-            if matched_day:
-                continue # Hoppa över själva dagnamnet
+            
+            if is_day_header:
+                continue # Gå till nästa rad så vi inte skriver ut själva ordet "Onsdag"
                 
-            if capture and len(clean_text) > 8: # En riktig maträtt är alltid längre än 8 tecken
-                # Stoppa helt om vi når Kvartersmenyns sidfot
-                if "inkl. smör" in lower_text or "öppet:" in lower_text:
+            if capture and len(clean_line) > 8:
+                # Kolla om vi nått botten av sidan/menyn
+                if "inkl. smör" in lower_line or "öppet:" in lower_line or "pris fr" in lower_line:
                     break
                     
-                # Rensa bort skräp-rubrikerna (och ***Husman***)
-                if not any(lower_text.startswith(iw) for iw in ignore_words) and "***" not in lower_text:
-                    item = f"• {clean_text}"
+                # Rensa bort skräp-rubrikerna
+                if not any(lower_line.startswith(iw) for iw in ignore_words) and lower_line not in ignore_words:
+                    item = f"• {clean_line}"
                     if item not in menu_items:
                         menu_items.append(item)
                         
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades för idag."
+        return "\n".join(menu_items) if menu_items else "⚠️ Hittade text men inga maträtter för idag."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
 
