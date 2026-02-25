@@ -11,70 +11,100 @@ CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 def get_day_number():
     return datetime.now().weekday() + 1
 
+def fix_encoding(text):
+    # En rejäl tvätt för att tvinga fram ÅÄÖ om requests misslyckas
+    try:
+        return text.encode('latin1').decode('utf-8')
+    except:
+        return text
+
 def scrape_nya_etage():
     try:
         url = "https://nyaetage.se/"
-        res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+        # Vi använder en session för att vara mer stabila
+        session = requests.Session()
+        res = session.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         
-        # FIX: Tvinga rätt teckenkodning (UTF-8) så ÅÄÖ ser bra ut
-        res.encoding = 'utf-8' 
+        # Tvinga UTF-8 direkt på innehållet
+        res.encoding = res.apparent_encoding
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='utf-8')
         
-        soup = BeautifulSoup(res.text, 'html.parser')
         day_num = get_day_number()
-        
         day_card = soup.find('div', attrs={'data-day': str(day_num)})
+        
         if not day_card:
-            return "⚠️ Hittade inte dagens kort."
+            return "⚠️ Hittade inte dagens meny-kort."
 
         items_container = day_card.find('div', class_='menu-items')
         if not items_container:
-            return "⚠️ Hittade inte menu-items."
+            return "⚠️ Hittade inte rätterna i boxen."
 
-        # Vi plockar alla rader och delar upp dem
+        # Hitta alla rader med mat
         rows = items_container.find_all('p')
-        dagens_ratter = []
-        veg_vegan = ""
+        dagens = []
+        veggo = ""
 
         for row in rows:
             text = row.get_text(strip=True).lstrip('>').strip()
-            if not text:
+            if not text or len(text) < 3:
                 continue
             
-            # Sortera ut Vegetariskt/Veganskt
+            # Sortera Veg/Vegan
             if "veg/" in text.lower() or "vegan" in text.lower():
-                veg_vegan = f"\n🥗 *Vegetariskt/Vegan*\n• {text}"
+                veggo = f"\n🥗 *Veg/Vegan*\n• {text}"
             else:
-                dagens_ratter.append(f"• {text}")
+                dagens.append(f"• {text}")
 
-        # Sätt ihop texten snyggt
-        meny_output = "\n".join(dagens_ratter)
-        if veg_vegan:
-            meny_output += veg_vegan
-            
-        return meny_output if dagens_ratter else "⚠️ Inga rätter hittades."
+        if not dagens and not veggo:
+            return "⚠️ Tomt i containern."
+
+        return "\n".join(dagens) + veggo
 
     except Exception as e:
         return f"❌ Fel: {str(e)}"
+
+def scrape_sodra_porten():
+    try:
+        url = "https://sodraporten.kvartersmenyn.se/"
+        res = requests.get(url, timeout=15)
+        res.encoding = 'utf-8'
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
+        current_day = days[datetime.now().weekday()]
+        
+        # Letar efter rubriken
+        header = soup.find(lambda t: t.name in ["h3", "h4"] and current_day.lower() in t.get_text().lower())
+        if header:
+            menu_div = header.find_next_sibling('div')
+            if menu_div:
+                items = []
+                for p in menu_div.find_all('p'):
+                    txt = p.get_text(strip=True)
+                    if len(txt) > 5:
+                        items.append(f"• {txt}")
+                return "\n".join(items) if items else "Hittade inga rätter."
+        return "Menyn inte uppdaterad än."
+    except:
+        return "Kunde inte hämta menyn."
 
 async def main():
     if datetime.now().weekday() >= 5: return 
     
     bot = Bot(token=TOKEN)
-    etage_meny = scrape_nya_etage()
+    etage = scrape_nya_etage()
+    sodra = scrape_sodra_porten()
     
-    dag_namn = ["MÅNDAG", "TISDAG", "ONSDAG", "TORSDAG", "FREDAG"][datetime.now().weekday()]
+    dag = ["MÅNDAG", "TISDAG", "ONSDAG", "TORSDAG", "FREDAG"][datetime.now().weekday()]
     
     msg = (
-        f"🍴 *LUNCH {dag_namn}* 🍴\n\n"
-        f"📍 *Nya Etage*\n{etage_meny}\n\n"
+        f"🍴 *LUNCH {dag}* 🍴\n\n"
+        f"📍 *Nya Etage*\n{etage}\n\n"
+        f"📍 *Södra Porten*\n{sodra}\n\n"
         "Smaklig måltid!"
     )
     
-    try:
-        # MarkdownV2 kan vara petigt, vi kör vanlig Markdown här för stabilitet
-        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
-    except Exception as e:
-        print(f"Telegram fel: {e}")
+    await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
 
 if __name__ == "__main__":
     asyncio.run(main())
