@@ -51,75 +51,41 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        url = "https://sodraporten.kvartersmenyn.se/"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0'}
-        html = ""
+        # Vi går direkt mot Compass Groups API istället för att skrapa hemsidan
+        # Detta är mycket mer stabilt och blockeras inte
+        api_url = "https://eu-central-1.aws.data.mongodb-api.com/app/compass-gastronomy-restaurants-puvoc/endpoint/get_menu"
+        params = {
+            'restaurant_id': '650974892c556b6b3e700a89', # ID för Södra Porten
+            'language': 'sv'
+        }
         
-        try:
-            res = requests.get(url, timeout=10, headers=headers)
-            if res.status_code == 200: 
-                res.encoding = 'utf-8'
-                html = res.text
-        except: pass
-        
-        if not html:
-            try:
-                res = requests.get(f"https://api.allorigins.win/get?url={url}", timeout=10)
-                if res.status_code == 200: 
-                    html = res.json().get('contents', '')
-            except: pass
-
-        if not html:
-            return "⚠️ Kunde inte hämta menyn (Blockerad av Kvartersmenyn)."
-
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
-        if not menu_div:
-            return "⚠️ Hittade inte meny-rutan på sidan."
-
-        for br in menu_div.find_all('br'):
-            br.replace_with('\n')
-
-        lines = [line.strip() for line in menu_div.get_text(separator='\n').split('\n') if line.strip()]
-        
-        days = ["måndag", "tisdag", "onsdag", "torsdag", "fredag"]
+        res = requests.get(api_url, params=params, timeout=15)
+        if res.status_code != 200:
+            return "⚠️ Kunde inte hämta menyn från Södra Porten."
+            
+        data = res.json()
+        if not data or 'days' not in data:
+            return "⚠️ Ingen meny tillgänglig."
+            
+        # Hitta dagens meny i JSON-datan
         today_idx = datetime.now().weekday()
         if today_idx >= 5: return "Helg!"
-        today_str = days[today_idx]
-
-        menu_items = []
-        capture = False
         
-        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "husmanskost", "lunchmeny", "pogre"]
-
-        for line in lines:
-            clean_line = line.replace('pogre', '').replace('*', '').replace('_', '').strip()
-            low = clean_line.lower()
-            
-            is_day = False
-            for d in days:
-                if low == d or low.startswith(d + ":"):
-                    is_day = True
-                    capture = (d == today_str)
-                    break
-            
-            if is_day:
-                continue
-
-            if capture:
-                if "öppet" in low or "pris fr" in low or "inkl" in low or "restaurang" in low:
-                    break
+        # Compass API returnerar ofta menyer per vecka
+        day_data = data['days'][today_idx]
+        menu_items = []
+        
+        for menu in day_data.get('menus', []):
+            dish = menu.get('menu_item_name', '')
+            if dish:
+                # Rensa bort onödig text och lägg till punkt
+                clean_dish = dish.strip().replace('*', '').replace('_', '')
+                menu_items.append(f"• {clean_dish}")
                 
-                if len(clean_line) > 8:
-                    if not any(low.startswith(iw) for iw in ignore_words) and low not in ignore_words:
-                        item = f"• {clean_line}"
-                        if item not in menu_items:
-                            menu_items.append(item)
-
-        return "\n".join(menu_items) if menu_items else "⚠️ Hittade rutan men inga rätter för idag."
+        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades för idag."
+        
     except Exception as e:
-        return f"❌ Fel: {str(e)}"
+        return f"❌ Fel Södra Porten: {str(e)}"
 
 async def main():
     if datetime.now().weekday() >= 5: 
