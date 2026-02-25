@@ -1,7 +1,7 @@
 import asyncio
 import requests
 import os
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup
 from datetime import datetime
 from telegram import Bot
 
@@ -52,69 +52,80 @@ def scrape_nya_etage():
 def scrape_sodra_porten():
     try:
         url = "https://sodraporten.kvartersmenyn.se/"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36'}
+        # Avancerad "förklädnad" så Kvartersmenyn inte blockerar oss
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'sv,en-US;q=0.7,en;q=0.3'
+        }
         res = requests.get(url, timeout=15, headers=headers)
         res.encoding = 'utf-8'
+        
+        # LÖGNDETEKTORN: Berättar direkt om sidan sparkade ut oss
+        if res.status_code != 200:
+            return f"⚠️ Sidan blockerade boten (HTTP Felkod {res.status_code})."
+            
         soup = BeautifulSoup(res.text, 'html.parser')
         
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
-        today = days[datetime.now().weekday()].lower()
+        today_str = days[datetime.now().weekday()]
         
-        # 1. Hitta taggen för dagens namn, VAR DEN ÄN ÄR på hela sidan
-        day_tag = None
-        for tag in soup.find_all(['strong', 'b', 'h3', 'h4', 'div', 'p']):
-            if tag.get_text(strip=True).lower() == today:
-                day_tag = tag
-                break
+        # 1. Hitta menylådan
+        menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
+        
+        if not menu_div:
+            # Fallback om de bytt namn på lådan: Hitta ordet "Onsdag" och ta dess förälder
+            day_tag = soup.find(lambda t: t.name in ['strong', 'b', 'h3', 'h4'] and today_str.lower() in t.get_text().lower())
+            if day_tag:
+                menu_div = day_tag.parent
                 
-        # Fallback om de skrivit typ "Onsdag 25/2"
-        if not day_tag:
-            for tag in soup.find_all(['strong', 'b', 'h3', 'h4']):
-                if tag.get_text(strip=True).lower().startswith(today):
-                    day_tag = tag
-                    break
+        if not menu_div:
+            return "⚠️ Hittade varken meny-containern eller dagens rubrik på sidan."
 
-        if not day_tag:
-            return "⚠️ Hittade inte dagens rubrik på sidan."
-
+        # 2. Den platta, brutala metoden:
+        # Gör om alla <br> till radbrytningar och rensa bort alla skräptaggar
+        for br in menu_div.find_all('br'):
+            br.replace_with('\n')
+            
+        # Nu är det en ren och skär textmassa utan HTML!
+        text_content = menu_div.get_text(separator='\n')
+        lines = [line.strip() for line in text_content.split('\n') if line.strip()]
+        
         menu_items = []
+        capture = False
         ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "***", "husmanskost", "pogre"]
         
-        # 2. Gå igenom all text och alla taggar som ligger DIREKT EFTER rubriken
-        for sibling in day_tag.next_siblings:
-            text = ""
+        # 3. Läs rad för rad
+        for line in lines:
+            lower_line = line.lower()
             
-            if isinstance(sibling, NavigableString):
-                text = str(sibling).strip()
-            elif isinstance(sibling, Tag):
-                # Om vi stöter på en tjock rubrik med NÄSTA dags namn, då är vi klara!
-                if sibling.name in ['strong', 'b', 'h3', 'h4']:
-                    sibling_text = sibling.get_text(strip=True).lower()
-                    if any(d.lower() in sibling_text for d in days if d.lower() != today):
-                        break 
-                
-                # Plocka text från vanliga taggar, strunta i <br> och <i>
-                if sibling.name not in ['br', 'i', 'hr']:
-                    text = sibling.get_text(strip=True)
+            # Kolla om raden är en veckodag
+            is_day = False
+            for d in days:
+                if lower_line == d.lower() or lower_line.startswith(d.lower() + ":"):
+                    is_day = True
+                    if d.lower() == today_str.lower():
+                        capture = True # Dagens meny startar!
+                    else:
+                        capture = False # Vi nådde nästa dag!
+                    break
                     
-            if not text:
+            if is_day:
                 continue
                 
-            clean_text = text.replace('*', '').replace('_', '').replace('"', '')
-            lower_clean = clean_text.lower()
-            
-            # För säkerhets skull: Om texten i sig är ett dagnamn, sluta leta
-            if any(lower_clean == d.lower() for d in days if d.lower() != today):
-                break
-                
-            # 3. Sortera ut rätterna från skräpet
-            if len(clean_text) > 8:
-                if not any(lower_clean.startswith(iw) for iw in ignore_words) and lower_clean not in ignore_words:
-                    item = f"• {clean_text}"
-                    if item not in menu_items:
-                        menu_items.append(item)
-                        
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter hittades under rubriken."
+            if capture:
+                # Kolla om vi nått botten av sidan
+                if "inkl. smör" in lower_line or "öppet:" in lower_line or "pris fr" in lower_line:
+                    break
+                    
+                # Rensa och spara rätterna (filtrerar bort Grönt och Gott etc)
+                if len(line) > 8:
+                    if not any(lower_line.startswith(iw) for iw in ignore_words) and lower_line not in ignore_words:
+                        clean_line = line.replace('*', '').replace('_', '').replace('"', '').strip()
+                        if f"• {clean_line}" not in menu_items:
+                            menu_items.append(f"• {clean_line}")
+                            
+        return "\n".join(menu_items) if menu_items else "⚠️ Koden läste rutan men hittade inga rätter."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
 
