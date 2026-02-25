@@ -16,62 +16,72 @@ def get_swedish_day():
 def scrape_sodra_porten():
     try:
         url = "https://sodraporten.kvartersmenyn.se/"
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(response.text, 'html.parser')
         day_name = get_swedish_day()
         
-        # Söker efter dagen oavsett stora/små bokstäver
-        day_header = soup.find(lambda tag: tag.name == "h3" and day_name.lower() in tag.text.lower())
+        # Kvartersmenyn kan ha dagen i h3 eller h4
+        day_header = soup.find(lambda tag: tag.name in ["h3", "h4"] and day_name.lower() in tag.text.lower())
         
         if not day_header:
-            return f"Hittade inte sektionen för {day_name}."
+            return f"⚠️ Hittade ingen meny för {day_name} på sidan just nu."
         
-        menu_div = day_header.find_next_sibling('div', class_='menu_perc_div')
+        menu_div = day_header.find_next_sibling('div')
+        if not menu_div:
+            return "⚠️ Hittade dagen men inte rätterna."
+
         items = menu_div.find_all('p')
-        
         menu_text = ""
         for item in items:
             txt = item.get_text(strip=True)
-            if txt and len(txt) > 3: # Ignorerar tomma eller för korta rader
+            if len(txt) > 5: # Ignorera korta rader som "Vegetariskt" om rätten saknas
                 menu_text += f"• {txt}\n"
         
-        return menu_text if menu_text else "Menyn är tom för idag."
+        return menu_text if menu_text else "Menyn verkar vara tom för tillfället."
     except Exception as e:
-        return f"Fel: {e}"
+        return f"❌ Tekniskt fel: {e}"
 
 def scrape_nya_etage():
     try:
         url = "https://nyaetage.se/"
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(response.text, 'html.parser')
         day_name = get_swedish_day()
         
-        # Letar efter dagen i h4, strong eller p
-        day_tag = soup.find(lambda tag: tag.name in ['h4', 'strong', 'p'] and day_name.lower() in tag.text.lower())
+        # Nya Etage är lite luriga med sina taggar
+        day_tag = soup.find(lambda tag: day_name.lower() in tag.text.lower() and tag.name in ['h4', 'strong', 'p', 'span'])
         
         if not day_tag:
-            return f"Hittade inte sektionen för {day_name}."
+            return f"⚠️ Menyn för {day_name} verkar inte vara uppladdad än."
         
         menu_items = []
-        current = day_tag.find_next('p')
-        # Samla ihop alla rader tills vi når nästa dag
+        # Vi letar efter rätter i de efterföljande elementen
+        current = day_tag.find_next(['p', 'div'])
         while current:
             text = current.get_text(strip=True)
+            # Stoppa om vi krockar med nästa dag
             if any(d in text for d in ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]) and text.lower() != day_name.lower():
                 break
-            if text and text.lower() != day_name.lower():
+            if text and len(text) > 5 and text.lower() != day_name.lower():
                 menu_items.append(f"• {text}")
-            current = current.find_next('p')
+            current = current.find_next(['p', 'div'])
             
-        return "\n".join(menu_items) if menu_items else "Kunde inte läsa rätterna."
+        return "\n".join(menu_items) if menu_items else "Kunde inte läsa ut rätterna."
     except Exception as e:
-        return f"Fel: {e}"
+        return f"❌ Tekniskt fel: {e}"
 
 async def main():
     day = get_swedish_day()
-    if day in ["Lördag", "Söndag"]: return
+    if day in ["Lördag", "Söndag"]: 
+        print("Helg!")
+        return
+
+    if not TOKEN or not CHAT_ID:
+        print("Saknar Token/ChatID")
+        return
 
     bot = Bot(token=TOKEN)
+    
     sodra = scrape_sodra_porten()
     etage = scrape_nya_etage()
     
