@@ -1,6 +1,7 @@
 import asyncio
 import requests
 import os
+import re
 from bs4 import BeautifulSoup
 from datetime import datetime
 from telegram import Bot
@@ -17,45 +18,82 @@ def scrape_sodra_porten():
         url = "https://sodraporten.kvartersmenyn.se/"
         res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(res.text, 'html.parser')
-        day = get_swedish_day()
+        day_name = get_swedish_day()
         
-        # Försök hitta specifik dag
-        header = soup.find(lambda t: t.name in ["h3", "h4"] and day.lower() in t.text.lower())
-        if header:
-            menu = header.find_next_sibling('div')
-            if menu:
-                txt = "\n".join([f"• {p.get_text(strip=True)}" for p in menu.find_all('p') if len(p.get_text()) > 3])
-                if txt: return txt
-
-        # Backup: Hämta hela veckans text om dagen saknas
-        all_text = soup.find('div', class_='menu_perc_div')
-        return "Veckans meny:\n" + all_text.get_text(separator="\n", strip=True)[:300] + "..." if all_text else "Ingen meny tillgänglig."
-    except: return "Kunde inte hämta från Södra Porten."
+        # Hitta rubriken som innehåller dagens namn
+        target = soup.find(lambda t: t.name in ['h3', 'h4', 'strong'] and day_name.lower() in t.get_text().lower())
+        
+        if target:
+            menu_items = []
+            # Kvartersmenyn lägger ofta rätterna i efterföljande p-taggar eller i en div
+            container = target.find_next(['div', 'p'])
+            # Vi plockar de kommande 8 p-taggarna (räcker gott för en lunchmeny)
+            current = target.find_next('p')
+            count = 0
+            while current and count < 10:
+                text = current.get_text(strip=True)
+                # Om vi stöter på nästa veckodag, avbryt
+                if any(d in text for d in ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]) and day_name.lower() not in text.lower():
+                    break
+                if len(text) > 4:
+                    menu_items.append(f"• {text}")
+                current = current.find_next('p')
+                count += 1
+            
+            if menu_items: return "\n".join(menu_items)
+            
+        return "Kunde inte extrahera rätterna, men sidan är uppe."
+    except Exception as e:
+        return f"Fel vid skrapning: {str(e)}"
 
 def scrape_nya_etage():
     try:
         url = "https://nyaetage.se/"
         res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(res.text, 'html.parser')
-        day = get_swedish_day()
+        day_name = get_swedish_day()
         
-        tag = soup.find(lambda t: day.lower() in t.text.lower() and t.name in ['h4', 'strong', 'p'])
-        if tag:
-            items = []
-            curr = tag.find_next('p')
-            while curr and not any(d in curr.text for d in ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"] if d != day):
-                t = curr.get_text(strip=True)
-                if t and t != day: items.append(f"• {t}")
-                curr = curr.find_next('p')
-            if items: return "\n".join(items)
+        # Nya Etage har "Onsdag IDAG". Vi letar efter containern som har dagens namn.
+        # Vi söker i alla h3 (som används i deras boxar)
+        day_box = soup.find(lambda t: t.name == 'h3' and day_name.lower() in t.get_text().lower())
+        
+        if day_box:
+            # Gå upp till föräldern (boxen) och hitta alla list-objekt eller p-taggar
+            parent = day_box.find_parent('div')
+            if not parent: parent = day_box.parent
+            
+            items = parent.find_all(['li', 'p'])
+            menu_text = []
+            for i in items:
+                txt = i.get_text(strip=True)
+                # Rensa bort rubriken själv och korta ord
+                if day_name.lower() not in txt.lower() and len(txt) > 3:
+                    # Ta bort ">" tecken som de använder som bullets
+                    clean_txt = txt.lstrip('>').strip()
+                    menu_text.append(f"• {clean_txt}")
+            
+            if menu_text: return "\n".join(menu_text)
 
-        return "Besök https://nyaetage.se/ för veckomenyn (ej uppdaterad dag-för-dag än)."
-    except: return "Kunde inte hämta från Nya Etage."
+        return "Hittade boxen men inga rätter. Kolla formatet."
+    except Exception as e:
+        return f"Fel vid skrapning: {str(e)}"
 
 async def main():
     if get_swedish_day() in ["Lördag", "Söndag"]: return
+    
     bot = Bot(token=TOKEN)
-    msg = f"🍴 *LUNCH {get_swedish_day().upper()}* 🍴\n\n📍 *Södra Porten*\n{scrape_sodra_porten()}\n\n📍 *Nya Etage*\n{scrape_nya_etage()}\n\nSmaklig måltid!"
+    
+    # Hämta menyer
+    sodra = scrape_sodra_porten()
+    etage = scrape_nya_etage()
+    
+    msg = (
+        f"🍴 *LUNCH {get_swedish_day().upper()}* 🍴\n\n"
+        f"📍 *Södra Porten*\n{sodra}\n\n"
+        f"📍 *Nya Etage*\n{etage}\n\n"
+        "Smaklig måltid!"
+    )
+    
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
 
 if __name__ == "__main__":
