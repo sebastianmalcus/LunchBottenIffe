@@ -1,28 +1,28 @@
-name: Skicka Lunchmeny
+name: Daily Lunch Update
 
 on:
   schedule:
-    # Körs kl 09:30 UTC (vilket är 10:30 svensk tid) varje vardag
-    - cron: '30 9 * * 1-5'
-  workflow_dispatch: # Gör att du kan starta den manuellt för test
+    # Kör kl 07:30 UTC (vilket är 08:30 svensk tid)
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch: # Tillåter att du kör den manuellt också
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout kod
-        uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-      - name: Installera Python
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v2
         with:
           python-version: '3.9'
 
-      - name: Installera beroenden
+      - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install requests beautifulsoup4 python-telegram-bot
 
-      - name: Kör lunchskriptet
+      - name: Run bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
