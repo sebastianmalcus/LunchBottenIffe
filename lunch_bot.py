@@ -43,7 +43,7 @@ def scrape_nya_etage():
 
         meny = "\n".join(dagens)
         if veggo:
-            meny += veggo
+            meny += f"\n{veggo}"
             
         return meny if meny else "⚠️ Inga rätter hittades."
     except Exception as e:
@@ -51,7 +51,6 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        # Vi använder den direkta Mashie-länken som du hittade!
         url = "https://compass.mashie.matildaplatform.com/public/app/s%C3%B6dra+porten/e64c2893?country=se"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
         
@@ -59,11 +58,7 @@ def scrape_sodra_porten():
         res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # Mashie visar ofta flera dagar. Vi letar efter den panel som är "primary" (dagens) 
-        # eller matchar datumet.
-        today_date_str = datetime.now().strftime('%d %b').lower() # t.ex. "25 feb"
-        
-        # Hitta alla dags-paneler
+        today_date_str = datetime.now().strftime('%d %b').lower()
         panels = soup.find_all('div', class_='panel')
         day_panel = None
         
@@ -73,33 +68,35 @@ def scrape_sodra_porten():
                 day_panel = p
                 break
         
-        # Fallback: Om datumet inte matchar exakt, ta den första 'panel-primary'
         if not day_panel:
             day_panel = soup.find('div', class_='panel-primary')
 
         if not day_panel:
-            return "⚠️ Hittade inte dagens meny-panel på sidan."
+            return "⚠️ Hittade inte dagens meny."
 
-        menu_items = []
-        # Varje rätt ligger i en div med klassen 'list-group-item-menu'
+        dagens = []
+        veggo = ""
         items = day_panel.find_all('div', class_='list-group-item-menu')
         
         for item in items:
-            # Kategorinamn (t.ex. "Grönt och Gott")
             cat_tag = item.find('strong', class_='app-alternative-name')
-            # Själva rätten
             dish_tag = item.find('div', class_='app-daymenu-name')
             
             if dish_tag:
                 dish_text = dish_tag.get_text(strip=True)
                 cat_text = cat_tag.get_text(strip=True) if cat_tag else ""
                 
+                # Sorterar vegetariskt till egen variabel för att lägga den sist
                 if "grönt" in cat_text.lower():
-                    menu_items.append(f"🥗 *Veg:* {dish_text}")
+                    veggo = f"\n🥗 *Vegetariskt*\n• {dish_text}"
                 else:
-                    menu_items.append(f"• {dish_text}")
+                    dagens.append(f"• {dish_text}")
                     
-        return "\n".join(menu_items) if menu_items else "⚠️ Inga rätter extraherade."
+        meny = "\n".join(dagens)
+        if veggo:
+            meny += f"\n{veggo}"
+            
+        return meny if meny else "⚠️ Inga rätter hittades."
         
     except Exception as e:
         return f"❌ Fel Södra Porten: {str(e)}"
@@ -114,17 +111,18 @@ async def main():
     
     dag = ["MÅNDAG", "TISDAG", "ONSDAG", "TORSDAG", "FREDAG"][datetime.now().weekday()]
     
+    # Skapar extra luft med dubbla radbrytningar mellan sektionerna
     msg = (
-        f"🍴 *LUNCH {dag}* 🍴\n\n"
-        f"📍 *Nya Etage*\n{etage}\n\n"
-        f"📍 *Södra Porten*\n{sodra}\n\n"
-        "Smaklig måltid!"
+        f"🍴 *LUNCH {dag}* 🍴\n\n\n"
+        f"📍 *Nya Etage*\n{etage}\n\n\n"
+        f"📍 *Södra Porten*\n{sodra}\n\n\n"
+        "_Smaklig måltid!_"
     )
     
     try:
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='Markdown')
     except Exception:
-        await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', ''))
+        await bot.send_message(chat_id=CHAT_ID, text=msg.replace('*', '').replace('_', ''))
 
 if __name__ == "__main__":
     asyncio.run(main())
