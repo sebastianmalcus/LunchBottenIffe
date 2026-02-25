@@ -51,56 +51,81 @@ def scrape_nya_etage():
 
 def scrape_sodra_porten():
     try:
-        url = "https://sodraporten.kvartersmenyn.se/"
+        target_url = "https://sodraporten.kvartersmenyn.se/"
+        # Vi använder AllOrigins som en tunnel för att komma runt IP-blockeringen!
+        proxy_url = f"https://api.allorigins.win/get?url={target_url}"
         
-        # Försök 1: Vanlig webbläsare
-        res = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+        res = requests.get(proxy_url, timeout=20)
         
-        # Försök 2: Om vi är blockerade, prova helt utan förklädnad
-        if res.status_code == 403:
-            res = requests.get(url, timeout=15)
-            
         if res.status_code != 200:
-            return f"⚠️ Sidan blockerar oss just nu (Felkod {res.status_code})."
+            return f"⚠️ Tunneln svarade inte (Felkod {res.status_code})."
             
-        res.encoding = 'utf-8'
-        soup = BeautifulSoup(res.text, 'html.parser')
+        # Packa upp den gömda webbsidan
+        data = res.json()
+        html_content = data.get('contents', '')
+        
+        if not html_content:
+            return "⚠️ Kunde inte hämta sidan genom tunneln."
+            
+        soup = BeautifulSoup(html_content, 'html.parser')
         
         days = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"]
         today_str = days[datetime.now().weekday()].lower()
         
-        # Vi struntar helt i deras rutor och drar ut ALL text från hemsidan
-        text_content = soup.get_text(separator='\n')
+        # 1. Hitta menylådan
+        menu_div = soup.find('div', class_='meny') or soup.find('div', class_='menu_perc_div')
+        
+        if not menu_div:
+            # Reservplan: Leta efter rubriken och ta dess låda
+            day_tag = soup.find(lambda t: t.name in ['strong', 'b', 'h3', 'h4'] and today_str.lower() in t.get_text().lower())
+            if day_tag:
+                menu_div = day_tag.parent
+                
+        if not menu_div:
+            return "⚠️ Hittade inte meny-containern på sidan."
+
+        # 2. Den platta metoden: Gör om <br> till radbrytningar
+        for br in menu_div.find_all('br'):
+            br.replace_with('\n')
+            
+        text_content = menu_div.get_text(separator='\n')
         lines = [line.strip() for line in text_content.split('\n') if line.strip()]
         
         menu_items = []
         capture = False
-        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "husmanskost", "pogre"]
+        ignore_words = ["grönt", "dagens", "sallad", "action", "fresh", "betala", "pris", "inkl", "öppet", "***", "husmanskost", "pogre"]
         
+        # 3. Läs rad för rad
         for line in lines:
             lower_line = line.lower()
             
-            # Kollar om raden BARA innehåller ett dagnamn
-            if any(lower_line == d.lower() for d in days):
-                if lower_line == today_str:
-                    capture = True
-                else:
-                    capture = False
+            # Kolla om raden är en veckodag
+            is_day = False
+            for d in days:
+                if lower_line == d.lower() or lower_line.startswith(d.lower() + ":"):
+                    is_day = True
+                    if d.lower() == today_str.lower():
+                        capture = True # Dagens meny startar!
+                    else:
+                        capture = False # Vi nådde nästa dag!
+                    break
+                    
+            if is_day:
                 continue
                 
             if capture:
-                # Sluta läsa om vi når slutet på menyn
+                # Kolla om vi nått botten av menyn
                 if "inkl" in lower_line or "öppet" in lower_line or "pris fr" in lower_line:
                     break
                     
-                # Plocka maten
-                if len(line) > 10:
+                # Rensa och spara rätterna
+                if len(line) > 8:
                     if not any(lower_line.startswith(iw) for iw in ignore_words) and lower_line not in ignore_words:
                         clean_line = line.replace('*', '').replace('_', '').replace('"', '').strip()
                         if f"• {clean_line}" not in menu_items:
                             menu_items.append(f"• {clean_line}")
                             
-        return "\n".join(menu_items) if menu_items else "⚠️ Sidan lästes, men inga maträtter matchade."
+        return "\n".join(menu_items) if menu_items else "⚠️ Koden läste rutan men hittade inga rätter."
     except Exception as e:
         return f"❌ Fel: {str(e)}"
 
